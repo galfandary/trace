@@ -70,21 +70,24 @@ class MMH3Set_t {
         free(d);
         return true;
     }
+    const char *addNew(const char *s, size_t i, size_t l) {
+        auto r = resize();
+        auto d = strdup(s);
+        if (r) put(d, l); else data[i] = d;
+        return d;
+    }
 public:
-    const char *add(const char *s, size_t l = 0, bool newOnly = true) {
+    const char *add(const char *s, size_t l = 0, bool ifNew = true) {
         if (!s) return 0;
         if (!l) l = strlen(s);
         auto i = MurmurHash3(s, l) % allc;
         for (;;) {
             auto t = data[i];
             if (!t) break;
-            if (!strcmp(s, t)) return newOnly ? 0 : t;
+            if (!strcmp(s, t)) return ifNew ? 0 : t;
             i = (i + 1) % allc;
         }
-        auto r = resize();
-        auto d = strdup(s);
-        if (r) put(d, l); else data[i] = d;
-        return d;
+        return addNew(s, i, l);
     }
     MMH3Set_t(size_t n = 1024, size_t l = 25, size_t g = 400) {
         size = 0;
