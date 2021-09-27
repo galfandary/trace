@@ -11,7 +11,9 @@ using namespace std;
 
 static inline const char *
 add_file(const char *file, size_t n = 0, bool newOnly = true) {
+    if (!file) return 0;
     static MMH3Set_t s;
+    if (!n) n = strlen(file);
     return s.add(file, n, newOnly);
 }
 

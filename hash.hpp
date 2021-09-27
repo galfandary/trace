@@ -52,8 +52,8 @@ class MMH3Set_t {
     void alloc(size_t n) {
         data = (char **) calloc(allc = n, sizeof(char *));
     }
-    void put(char *s, size_t l) {
-        auto i = MurmurHash3(s, l) % allc;
+    void put(char *s, size_t n) {
+        auto i = MurmurHash3(s, n) % allc;
         while (data[i]) i = (i + 1) % allc;
         data[i] = s;
     }
@@ -70,24 +70,29 @@ class MMH3Set_t {
         free(d);
         return true;
     }
-    const char *addNew(const char *s, size_t i, size_t l) {
+    const char *addNew(const char *s, size_t i, size_t n) {
         auto r = resize();
         auto d = strdup(s);
-        if (r) put(d, l); else data[i] = d;
+        if (r) put(d, n); else data[i] = d;
         return d;
     }
 public:
-    const char *add(const char *s, size_t l = 0, bool ifNew = true) {
-        if (!s) return 0;
-        if (!l) l = strlen(s);
-        auto i = MurmurHash3(s, l) % allc;
+    const char *add(const char *s, size_t n, bool ifNew) {
+        if (!s || !n) return 0;
+        auto i = MurmurHash3(s, n) % allc;
         for (;;) {
             auto t = data[i];
             if (!t) break;
             if (!strcmp(s, t)) return ifNew ? 0 : t;
             i = (i + 1) % allc;
         }
-        return addNew(s, i, l);
+        return addNew(s, i, n);
+    }
+    const char *add(const char *s, size_t n) {
+        return add(s, n, true);
+    }
+    const char *add(const char *s) {
+        return add(s, strlen(s));
     }
     MMH3Set_t(size_t n = 1024, size_t l = 25, size_t g = 400) {
         size = 0;
