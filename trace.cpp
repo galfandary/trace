@@ -96,23 +96,22 @@ static inline void add_relative(pid_t pid, char *file) {
 }
 
 static inline void get_text(pid_t pid, int fd, long adr) {
-    const size_t N = 513;
+    const size_t N = 513, B = sizeof(long);
     long buf[N], *s = buf;
-    auto B = sizeof(long);
-    auto S = (char *) s;
-    if (!add_fd(pid, fd, S)) return;
+    auto file = (char *) s;
+    if (!add_fd(pid, fd, file)) return;
     for (size_t i = 1; i < N; i++) {
         auto x = ptrace(PTRACE_PEEKDATA, pid, adr);
         if (x == -1) break;
         *s++ = x;
         if (memchr(&x, 0, B)) {
-            add_relative(pid, S);
+            add_relative(pid, file);
             return;
         }
         adr += B;
     }
     *s = 0;
-    add_relative(pid, S);
+    add_relative(pid, file);
 }
 
 static inline int get_func_id(const user_regs_struct &rg) {
