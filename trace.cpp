@@ -8,13 +8,13 @@
 #include <fcntl.h>
 using namespace std;
 
-struct ID_t {
+struct FID_t {
     ino_t id;
     dev_t dev;
     operator bool() const {
         return id || dev;
     }
-    bool operator ==(const ID_t &x) const {
+    bool operator ==(const FID_t &x) const {
         return x.id == id && x.dev == dev;
     }
 };
@@ -24,11 +24,11 @@ class FileHash_t {
     size_t load;
     size_t grow;
     size_t allc;
-    ID_t *data;
+    FID_t *data;
     void alloc(size_t n) {
-        data = (ID_t *) calloc(allc = n, sizeof(ID_t));
+        data = (FID_t *) calloc(allc = n, sizeof(FID_t));
     }
-    void put(const ID_t &id) {
+    void put(const FID_t &id) {
         auto i = id.id % allc;
         while (data[i]) i = (i + 1) % allc;
         data[i] = id;
@@ -44,7 +44,7 @@ class FileHash_t {
         return true;
     }
 public:
-    bool add(const ID_t &id) {
+    bool add(const FID_t &id) {
         if (!id) return false;
         auto i = id.id % allc;
         for (;;) {
@@ -68,13 +68,18 @@ public:
     }
 };
 
-struct FID_t : ID_t {
+static inline bool add_ID(const FID_t &id) {
+    static FileHash_t s;
+    return s.add(id);
+}
+
+struct Stat_t : FID_t {
     bool dir;
     bool link;
     bool empty;
-    FID_t(const char *file, int fd = AT_FDCWD, bool link = false) {
+    Stat_t(const char *file, int fd = AT_FDCWD, bool lkn = false) {
         struct stat s;
-        int flags = link ? AT_SYMLINK_NOFOLLOW : 0;
+        int flags = lkn ? AT_SYMLINK_NOFOLLOW : 0;
         if (fstatat(fd, file, &s, flags)) {
             id = dev = 0;
             return;
@@ -86,11 +91,6 @@ struct FID_t : ID_t {
         empty = s.st_size < 1;
     }
 };
-
-static inline bool add_ID(const FID_t &id) {
-    static FileHash_t s;
-    return s.add(id);
-}
 
 struct list_t : vector<string> {
     void add(const char *file) {
@@ -111,21 +111,20 @@ static list_t file_list;
 
 static int get_link(const char *file, char *buf) {
     auto r = readlink(file, buf, PATH_MAX);
-    if (r < 0) return -1;
-    buf[r] = 0;
-    return 0;
+    if (r >= 0) buf[r] = 0;
+    return r;
 }
 
 static void add_link(const char *file) {
     char buf[PATH_MAX];
-    if (!get_link(file, buf))
+    if (get_link(file, buf) >= 0)
         file_list.add(buf);
 }
 
 static void add_exe(pid_t pid) {
     char file[64];
     sprintf(file, "/proc/%d/exe", pid);
-    if (add_ID(FID_t(file))) add_link(file);
+    if (add_ID(Stat_t(file))) add_link(file);
 }
 
 static void get_path(char *buf, pid_t pid, int fd) {
@@ -136,17 +135,16 @@ static void get_path(char *buf, pid_t pid, int fd) {
 static bool add_fd(pid_t pid, int fd, char *buf) {
     char file[64];
     get_path(file, pid, fd);
-    FID_t id(file);
+    Stat_t id(file);
     if (!id) return false;
     auto add = !id.empty && !id.dir;
     if (add_ID(id) && add) add_link(file);
     return add;
 }
 
-static int add_dir(pid_t pid, int dirfd, char *file) {
-    char buf[PATH_MAX], cwd[64];
-    get_path(cwd, pid, dirfd);
-    auto r = get_link(cwd, buf);
+static int add_dir(const char *dir, char *file) {
+    char buf[PATH_MAX];
+    auto r = get_link(dir, buf);
     if (r < 0) return -1;
     auto s = buf + r;
     *s++ = '/';
@@ -156,9 +154,18 @@ static int add_dir(pid_t pid, int dirfd, char *file) {
 }
 
 static void add_relative(pid_t pid, int dirfd, char *file) {
-    if (file[0] != '/' && add_dir(pid, dirfd, file)) return;
-    FID_t id(file, AT_FDCWD, true);
+    char dir[64];
+    int fd = AT_FDCWD;
+    auto relative = file[0] != '/';
+    if (relative) {
+        get_path(dir, pid, dirfd);
+        fd = open(dir, O_PATH|O_DIRECTORY);
+        if (fd == -1) return;
+    }
+    Stat_t id(file, fd, true);
+    if (relative) close(fd);
     if (!id || !id.link || !add_ID(id)) return;
+    if (relative && add_dir(dir, file)) return;
     auto f = strrchr(file, '/');
     if (!f) return;
     *f++ = 0;
