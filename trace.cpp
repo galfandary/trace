@@ -132,12 +132,12 @@ static void get_path(char *buf, pid_t pid, int fd) {
     else sprintf(buf, "/proc/%d/fd/%d", pid, fd);
 }
 
-static bool add_fd(pid_t pid, int fd, char *buf) {
+static bool add_fd(pid_t pid, int fd, bool add = true) {
     char file[64];
     get_path(file, pid, fd);
     Stat_t id(file);
     if (!id) return false;
-    auto add = !id.empty && !id.dir;
+    if (add) add = !id.empty && !id.dir;
     if (add_ID(id) && add) add_link(file);
     return add;
 }
@@ -182,7 +182,7 @@ static void get_text(pid_t pid, int fd, int dirfd, long adr) {
     const size_t N = 513, B = sizeof(long);
     long buf[N], *s = buf;
     auto file = (char *) s;
-    if (!add_fd(pid, fd, file)) return;
+    if (!add_fd(pid, fd)) return;
     for (size_t i = 1; i < N; i++) {
         auto x = ptrace(PTRACE_PEEKDATA, pid, adr);
         if (x == -1) break;
@@ -197,26 +197,24 @@ static void get_text(pid_t pid, int fd, int dirfd, long adr) {
     add_relative(pid, dirfd, file);
 }
 
-static int get_func_id(const user_regs_struct &rg) {
-    switch (rg.orig_rax) {
-    case __NR_open: return 1;
-    case __NR_openat: return 2;
-    case __NR_execve: return 3;
-    case __NR_creat: return 4;
-    }
-    return 0;
-}
-
 static void process(pid_t pid) {
     user_regs_struct rg;
     auto r = ptrace(PTRACE_GETREGS, pid, 0, &rg);
-    if (r == -1 || rg.rax < 0) return;
-    auto fid = get_func_id(rg);
-    auto adr = fid == 2 ? rg.rsi : rg.rdi;
-    auto dirfd = fid == 2 ? rg.rdi : AT_FDCWD;
-    if (!fid || fid == 4) return;
-    if (fid == 3) add_exe(pid);
-    else get_text(pid, rg.rax, dirfd, adr);
+    if (r == -1) return;
+    auto fd = rg.rax;
+    if (fd < 0) return;
+    auto id = rg.orig_rax;
+    auto r1 = rg.rdi;
+    auto r2 = rg.rsi;
+    if (id == __NR_open) {
+        get_text(pid, fd, AT_FDCWD, r1);
+    } else if (id == __NR_openat) {
+        get_text(pid, fd, r1, r2);
+    } else if (id == __NR_creat) {
+        add_fd(pid, fd, false);
+    } else if (id == __NR_execve) {
+        add_exe(pid);
+    }
 }
 
 static bool loop(bool &opt) {
