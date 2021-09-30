@@ -68,7 +68,7 @@ public:
     }
 };
 
-static inline bool add_ID(const FID_t &id) {
+static bool add_ID(const FID_t &id) {
     static FileHash_t s;
     return s.add(id);
 }
