@@ -153,7 +153,7 @@ static int add_dir(const char *dir, char *file) {
     return 0;
 }
 
-static void add_relative(pid_t pid, int dirfd, char *file) {
+static void do_relative(pid_t pid, int dirfd, char *file, bool add) {
     char dir[64];
     int fd = AT_FDCWD;
     auto relative = file[0] != '/';
@@ -164,7 +164,7 @@ static void add_relative(pid_t pid, int dirfd, char *file) {
     }
     Stat_t id(file, fd, true);
     if (relative) close(fd);
-    if (!id || !id.link || !add_ID(id)) return;
+    if (!id || !id.link || !add_ID(id) || !add) return;
     if (relative && add_dir(dir, file)) return;
     auto f = strrchr(file, '/');
     if (!f) return;
@@ -178,23 +178,30 @@ static void add_relative(pid_t pid, int dirfd, char *file) {
     file_list.add(buf);
 }
 
-static void get_text(pid_t pid, int fd, int dirfd, long adr) {
-    const size_t N = 513, B = sizeof(long);
-    long buf[N], *s = buf;
-    auto file = (char *) s;
-    if (!add_fd(pid, fd)) return;
+static void get_text(pid_t pid, long adr, long *s, size_t N) {
+    const size_t B = sizeof(long);
     for (size_t i = 1; i < N; i++) {
         auto x = ptrace(PTRACE_PEEKDATA, pid, adr);
         if (x == -1) break;
         *s++ = x;
-        if (memchr(&x, 0, B)) {
-            add_relative(pid, dirfd, file);
+        if (memchr(&x, 0, B))
             return;
-        }
         adr += B;
     }
     *s = 0;
-    add_relative(pid, dirfd, file);
+}
+
+static void do_open(pid_t pid, int fd, int dirfd, long adr) {
+    if (!add_fd(pid, fd)) return;
+    const size_t N = 513; long buf[N];
+    get_text(pid, adr, buf, N);
+    do_relative(pid, dirfd, (char *) buf, true);
+}
+
+static void do_symlink(pid_t pid, int dirfd, long adr) {
+    const size_t N = 513; long buf[N];
+    get_text(pid, adr, buf, N);
+    do_relative(pid, dirfd, (char *) buf, false);
 }
 
 static void process(pid_t pid) {
@@ -206,14 +213,19 @@ static void process(pid_t pid) {
     auto id = rg.orig_rax;
     auto r1 = rg.rdi;
     auto r2 = rg.rsi;
+    auto r3 = rg.rdx;
     if (id == __NR_open) {
-        get_text(pid, fd, AT_FDCWD, r1);
+        do_open(pid, fd, AT_FDCWD, r1);
     } else if (id == __NR_openat) {
-        get_text(pid, fd, r1, r2);
+        do_open(pid, fd, r1, r2);
     } else if (id == __NR_creat) {
         add_fd(pid, fd, false);
     } else if (id == __NR_execve) {
         add_exe(pid);
+    } else if (id == __NR_symlink) {
+        do_symlink(pid, AT_FDCWD, r2);
+    } else if (id == __NR_symlinkat) {
+        do_symlink(pid, r2, r3);
     }
 }
 
