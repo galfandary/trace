@@ -127,14 +127,14 @@ static void add_exe(pid_t pid) {
     if (add_ID(Stat_t(file))) add_link(file);
 }
 
-static void get_path(char *buf, pid_t pid, int fd) {
+static void get_fd_path(char *buf, pid_t pid, int fd) {
     if (fd == AT_FDCWD) sprintf(buf, "/proc/%d/cwd", pid);
     else sprintf(buf, "/proc/%d/fd/%d", pid, fd);
 }
 
 static bool add_fd(pid_t pid, int fd, bool add = true) {
     char file[64];
-    get_path(file, pid, fd);
+    get_fd_path(file, pid, fd);
     Stat_t id(file);
     if (!id) return false;
     if (add) add = !id.empty && !id.dir;
@@ -158,7 +158,7 @@ static void do_relative(pid_t pid, int dirfd, char *file, bool add) {
     int fd = AT_FDCWD;
     auto relative = file[0] != '/';
     if (relative) {
-        get_path(dir, pid, dirfd);
+        get_fd_path(dir, pid, dirfd);
         fd = open(dir, O_PATH|O_DIRECTORY);
         if (fd == -1) return;
     }
@@ -178,7 +178,7 @@ static void do_relative(pid_t pid, int dirfd, char *file, bool add) {
     file_list.add(buf);
 }
 
-static void get_text(pid_t pid, long adr, long *s, size_t N) {
+static void get_path(pid_t pid, long adr, long *s, size_t N) {
     const size_t B = sizeof(long);
     for (size_t i = 1; i < N; i++) {
         auto x = ptrace(PTRACE_PEEKDATA, pid, adr);
@@ -194,13 +194,13 @@ static void get_text(pid_t pid, long adr, long *s, size_t N) {
 static void do_open(pid_t pid, int fd, int dirfd, long adr) {
     if (!add_fd(pid, fd)) return;
     const size_t N = 513; long buf[N];
-    get_text(pid, adr, buf, N);
+    get_path(pid, adr, buf, N);
     do_relative(pid, dirfd, (char *) buf, true);
 }
 
 static void do_symlink(pid_t pid, int dirfd, long adr) {
     const size_t N = 513; long buf[N];
-    get_text(pid, adr, buf, N);
+    get_path(pid, adr, buf, N);
     do_relative(pid, dirfd, (char *) buf, false);
 }
 
