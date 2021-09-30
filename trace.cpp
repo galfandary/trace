@@ -28,13 +28,17 @@ class FileHash_t {
     void alloc(size_t n) {
         data = (FID_t *) calloc(allc = n, sizeof(FID_t));
     }
-    void put(const FID_t &id) {
+    size_t find(const FID_t &id) {
         auto i = id.id % allc;
         while (data[i]) i = (i + 1) % allc;
-        data[i] = id;
+        return i;
+    }
+    void put(const FID_t &id) {
+        data[find(id)] = id;
     }
     bool resize() {
-        if (++size * 100 < allc * load) return false;
+        if (++size * 100 < allc * load)
+            return false;
         auto n = allc;
         auto d = data;
         alloc(grow * allc / 100);
@@ -53,8 +57,8 @@ public:
             if (x == id) return false;
             i = (i + 1) % allc;
         }
-        auto r = resize();
-        if (r) put(id); else data[i] = id;
+        if (resize()) i = find(id);
+        data[i] = id;
         return true;
     }
     FileHash_t(size_t n = 1024, size_t l = 25, size_t g = 400) {
