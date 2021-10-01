@@ -81,9 +81,9 @@ struct Stat_t : FID_t {
     bool dir;
     bool link;
     bool empty;
-    Stat_t(const char *file, int fd = AT_FDCWD, bool lkn = false) {
+    Stat_t(const char *file, int fd = AT_FDCWD, bool lnk = false) {
         struct stat s;
-        int flags = lkn ? AT_SYMLINK_NOFOLLOW : 0;
+        int flags = lnk ? AT_SYMLINK_NOFOLLOW : 0;
         if (fstatat(fd, file, &s, flags)) {
             id = dev = 0;
             return;
