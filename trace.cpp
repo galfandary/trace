@@ -9,13 +9,34 @@
 using namespace std;
 
 struct FID_t {
+    typedef unordered_set<string> set_t;
     ino_t id;
     dev_t dev;
+    set_t *files;
+    set_t *out = (set_t *) 1;
     operator bool() const {
         return id || dev;
     }
+    bool isSet() const {
+        return files;
+    }
     bool operator ==(const FID_t &x) const {
         return x.id == id && x.dev == dev;
+    }
+    void get(vector<string> &v) {
+        if (!files || files == out) return;
+        for (auto &i: *files) v.push_back(i);
+        delete files;
+        files = 0;
+    }
+    void add(const char *file) {
+        if (files == out) return;
+        if (file) {
+            if (!files) files = new set_t();
+            if (files) files->insert(file);
+        } else if (!files) {
+            files = out;
+        }
     }
 };
 
@@ -34,7 +55,7 @@ class FileHash_t {
         return i;
     }
     void put(const FID_t &id) {
-        data[find(id)] = id;
+        if (id) data[find(id)] = id;
     }
     bool resize() {
         if (++size * 100 < allc * load)
@@ -48,18 +69,32 @@ class FileHash_t {
         return true;
     }
 public:
-    bool add(const FID_t &id) {
-        if (!id) return false;
+    FID_t *add(const FID_t &id) {
+        if (!id) return 0;
         auto i = id.id % allc;
         for (;;) {
             auto &x = data[i];
             if (!x) break;
-            if (x == id) return false;
+            if (x == id) return &x;
             i = (i + 1) % allc;
         }
         if (resize()) i = find(id);
-        data[i] = id;
-        return true;
+        auto &x = data[i] = id;
+        return &x;
+    }
+    void save(const char *file) {
+        vector<string> v;
+        for (size_t i = 0; i < allc; i++)
+            data[i].get(v);
+        if (v.empty()) return;
+        auto fp = fopen(file, "wb");
+        if (!fp) return;
+        sort(v.begin(), v.end());
+        for (auto &i: v)
+            fprintf(fp, "%s\n", i.data());
+        fclose(fp);
+        free(data);
+        data = 0;
     }
     FileHash_t(size_t n = 1024, size_t l = 25, size_t g = 400) {
         size = 0;
@@ -67,14 +102,16 @@ public:
         grow = g;
         alloc(n);
     }
-    ~FileHash_t() {
-        free(data);
-    }
 };
 
-static bool add_ID(const FID_t &id) {
-    static FileHash_t s;
-    return s.add(id);
+static FileHash_t IDS;
+
+static FID_t *add_ID(const FID_t &id) {
+    return IDS.add(id);
+}
+
+static void save_list(const char *file) {
+    IDS.save(file);
 }
 
 struct Stat_t : FID_t {
@@ -93,25 +130,9 @@ struct Stat_t : FID_t {
         dir = S_ISDIR(s.st_mode);
         link = S_ISLNK(s.st_mode);
         empty = s.st_size < 1;
+        files = 0;
     }
 };
-
-struct list_t : vector<string> {
-    void add(const char *file) {
-        push_back(file);
-    }
-    void save(const char *file) {
-        if (empty()) return;
-        auto fp = fopen(file, "wb");
-        if (!fp) return;
-        sort(begin(), end());
-        for (auto &i: *this)
-            fprintf(fp, "%s\n", i.data());
-        fclose(fp);
-    }
-};
-
-static list_t file_list;
 
 static int get_link(const char *file, char *buf) {
     auto r = readlink(file, buf, PATH_MAX);
@@ -119,16 +140,19 @@ static int get_link(const char *file, char *buf) {
     return r;
 }
 
-static void add_link(const char *file) {
+static void add_link(Stat_t &id, const char *file, bool add = true) {
+    if (!id) return;
     char buf[PATH_MAX];
-    if (get_link(file, buf) >= 0)
-        file_list.add(buf);
+    if (get_link(file, buf) < 0) return;
+    auto d = add_ID(id);
+    if (d) d->add(add ? buf : 0);
 }
 
 static void add_exe(pid_t pid) {
     char file[64];
     sprintf(file, "/proc/%d/exe", pid);
-    if (add_ID(Stat_t(file))) add_link(file);
+    Stat_t id(file);
+    add_link(id, file);
 }
 
 static void get_fd_path(char *buf, pid_t pid, int fd) {
@@ -142,7 +166,7 @@ static bool add_fd(pid_t pid, int fd, bool add = true) {
     Stat_t id(file);
     if (!id) return false;
     if (add) add = !id.empty && !id.dir;
-    if (add_ID(id) && add) add_link(file);
+    add_link(id, file, add);
     return add;
 }
 
@@ -168,7 +192,9 @@ static void do_relative(pid_t pid, int dirfd, char *file, bool add) {
     }
     Stat_t id(file, fd, true);
     if (relative) close(fd);
-    if (!id || !id.link || !add_ID(id) || !add) return;
+    if (!id || !id.link) return;
+    auto d = add_ID(id);
+    if (!d || d->isSet()) return;
     if (relative && add_dir(dir, file)) return;
     auto f = strrchr(file, '/');
     if (!f) return;
@@ -179,7 +205,7 @@ static void do_relative(pid_t pid, int dirfd, char *file, bool add) {
     auto s = buf + l;
     *s++ = '/';
     strcpy(s, f);
-    file_list.add(buf);
+    d->add(add ? buf : 0);
 }
 
 static void get_path(pid_t pid, long adr, long *s, size_t N) {
@@ -262,7 +288,7 @@ int main(int argc, char *argv[]) {
     if (pid) {
         auto opt = true;
         while (loop(opt));
-        file_list.save(argv[1]);
+        save_list(argv[1]);
     } else {
         ptrace(PTRACE_TRACEME);
         kill(getpid(), SIGSTOP);
