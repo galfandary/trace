@@ -170,42 +170,57 @@ static bool add_fd(pid_t pid, int fd, bool add = true) {
     return add;
 }
 
-static int add_dir(const char *dir, char *file) {
-    char buf[PATH_MAX];
-    auto r = get_link(dir, buf);
-    if (r < 0) return -1;
-    auto s = buf + r;
+static void add_dir(char *dir, char *file) {
+    auto s = dir + strlen(dir);
     *s++ = '/';
     strcpy(s, file);
-    strcpy(file, buf);
+}
+
+static int abs_path(char *file, char *dir, char *buf) {
+    auto f = strrchr(file, '/');
+    if (!f) return -1;
+    *f++ = 0;
+    if (!realpath(file, buf)) return -1;
+    strcpy(dir, buf);
+    auto s = buf + strlen(buf);
+    *s++ = '/';
+    strcpy(s, f);
     return 0;
 }
 
-static void do_relative(pid_t pid, int dirfd, char *file, bool add) {
-    char dir[64];
+static FID_t *do_link(char *file, char *dir, char *buf, bool add) {
     int fd = AT_FDCWD;
     auto relative = file[0] != '/';
     if (relative) {
-        get_fd_path(dir, pid, dirfd);
         fd = open(dir, O_PATH|O_DIRECTORY);
-        if (fd == -1) return;
+        if (fd == -1) return 0;
     }
     Stat_t id(file, fd, true);
     if (relative) close(fd);
-    if (!id || !id.link) return;
+    if (!id || !id.link) return 0;
     auto d = add_ID(id);
-    if (!d || d->isSet()) return;
-    if (relative && add_dir(dir, file)) return;
-    auto f = strrchr(file, '/');
-    if (!f) return;
-    *f++ = 0;
-    char buf[PATH_MAX];
-    if (!realpath(file, buf)) return;
-    auto l = strlen(buf);
-    auto s = buf + l;
-    *s++ = '/';
-    strcpy(s, f);
-    d->add(add ? buf : 0);
+    if (!d || d->isSet()) return 0;
+    if (!add) {
+        d->add(0);
+        return 0;
+    }
+    if (relative) {
+        add_dir(dir, file);
+        strcpy(file, dir);
+    }
+    if (abs_path(file, dir, buf)) return 0;
+    d->add(buf);
+    return d;
+}
+
+static void do_relative(pid_t pid, int dirfd, char *file, bool add) {
+    char dir[PATH_MAX], buf[PATH_MAX];
+    if (file[0] != '/') get_fd_path(dir, pid, dirfd);
+    while (do_link(file, dir, buf, add)) {
+        auto r = get_link(buf, file);
+        if (r < 0) return;
+        add = true;
+    }
 }
 
 static void get_path(pid_t pid, long adr, long *s, size_t N) {
