@@ -182,9 +182,7 @@ static int abs_path(char *file, char *dir, char *buf) {
     *f++ = 0;
     if (!realpath(file, buf)) return -1;
     strcpy(dir, buf);
-    auto s = buf + strlen(buf);
-    *s++ = '/';
-    strcpy(s, f);
+    add_dir(buf, f);
     return 0;
 }
 
