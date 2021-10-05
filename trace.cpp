@@ -188,29 +188,29 @@ static int abs_path(char *file, char *dir, char *buf) {
     return 0;
 }
 
-static FID_t *do_link(char *file, char *dir, char *buf, bool add) {
+static bool do_link(char *file, char *dir, char *buf, bool add) {
     int fd = AT_FDCWD;
     auto relative = file[0] != '/';
     if (relative) {
         fd = open(dir, O_PATH|O_DIRECTORY);
-        if (fd == -1) return 0;
+        if (fd == -1) return false;
     }
     Stat_t id(file, fd, true);
     if (relative) close(fd);
-    if (!id || !id.link) return 0;
+    if (!id || !id.link) return false;
     auto d = add_ID(id);
-    if (!d || d->isSet()) return 0;
+    if (!d || d->isSet()) return false;
     if (!add) {
         d->add(0);
-        return 0;
+        return false;
     }
     if (relative) {
         add_dir(dir, file);
         strcpy(file, dir);
     }
-    if (abs_path(file, dir, buf)) return 0;
+    if (abs_path(file, dir, buf)) return false;
     d->add(buf);
-    return d;
+    return true;
 }
 
 static void do_relative(pid_t pid, int dirfd, char *file, bool add) {
