@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 using namespace std;
+static auto follow_links = true;
 
 struct FID_t {
     typedef unordered_set<string> set_t;
@@ -186,7 +187,8 @@ static int abs_path(char *file, char *dir, char *buf) {
     return 0;
 }
 
-static bool do_link(char *file, char *dir, char *buf, bool add) {
+static bool do_link(char *file, char *dir,
+                    char *buf, bool add, size_t &n) {
     int fd = AT_FDCWD;
     auto relative = file[0] != '/';
     if (relative) {
@@ -197,6 +199,7 @@ static bool do_link(char *file, char *dir, char *buf, bool add) {
     if (relative) close(fd);
     if (!id || !id.link) return false;
     auto d = add_ID(id);
+    n++;
     if (!d || d->isSet()) return false;
     if (!add) {
         d->add(0);
@@ -211,14 +214,16 @@ static bool do_link(char *file, char *dir, char *buf, bool add) {
     return true;
 }
 
-static void do_relative(pid_t pid, int dirfd, char *file, bool add) {
+static size_t do_relative(pid_t pid, int dirfd, char *file, bool add) {
     char dir[PATH_MAX], buf[PATH_MAX];
     if (file[0] != '/') get_fd_path(dir, pid, dirfd);
-    while (do_link(file, dir, buf, add)) {
+    size_t n = 0;
+    while (do_link(file, dir, buf, add, n) && follow_links) {
         auto r = get_link(buf, file);
-        if (r < 0) return;
+        if (r < 0) break;
         add = true;
     }
+    return n;
 }
 
 static void get_path(pid_t pid, long adr, long *s, size_t N) {
@@ -235,10 +240,11 @@ static void get_path(pid_t pid, long adr, long *s, size_t N) {
 }
 
 static void do_open(pid_t pid, int fd, int dirfd, long adr) {
-    if (!add_fd(pid, fd)) return;
+    if (follow_links && !add_fd(pid, fd)) return;
     const size_t N = 513; long buf[N];
     get_path(pid, adr, buf, N);
-    do_relative(pid, dirfd, (char *) buf, true);
+    auto n = do_relative(pid, dirfd, (char *) buf, true);
+    if (!follow_links && !n) add_fd(pid, fd);
 }
 
 static void do_symlink(pid_t pid, int dirfd, long adr) {
@@ -294,18 +300,29 @@ static bool loop(bool &opt) {
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
-        printf("Usage: %s output cmd ...\n", argv[0]);
+        printf("Usage: %s [OPTION] output cmd ...\n", argv[0]);
+        printf("Options:\n"
+               " -l: Don't follow links\n");
         return -1;
+    }
+    int i = 1;
+    while (argv[i][0] == '-') {
+        switch (argv[i][1]) {
+        case 'l': follow_links = false; break;
+        default: printf("Unknown option: %s\n", argv[i]);
+        }
+        i++;
     }
     auto pid = fork();
     if (pid) {
         auto opt = true;
         while (loop(opt));
-        save_list(argv[1]);
+        save_list(argv[i]);
     } else {
+        i++;
         ptrace(PTRACE_TRACEME);
         kill(getpid(), SIGSTOP);
-        execvp(argv[2], &argv[2]);
+        execvp(argv[i], &argv[i]);
     }
     printf("Done\n");
     return 0;
